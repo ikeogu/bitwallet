@@ -24,4 +24,20 @@ impl DBConnection {
     pub fn get_connection(&self) -> Result<PooledConn, mysql::Error> {
         self.pool.get_conn()
     }
+
+    pub fn close_connection(&self, conn: PooledConn) {
+        drop(conn);
+    }
+
+
+    pub fn insert_wallet(&self, conn: &PooledConn, wallet: &Wallet) -> Result<(), mysql::Error> {
+        conn.exec_drop(
+            r"INSERT INTO wallets (name, balance, private_key) VALUES (:name, :balance :private_key)",
+            params! {
+                "name" => wallet.name,
+                "balance" => 0.00,
+                "private_key" => wallet.private_key
+            },
+        )
+    }
 }
