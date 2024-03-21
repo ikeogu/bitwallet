@@ -1,3 +1,5 @@
+
+
 use actix_web::web;
 
 use actix_web::HttpResponse;
@@ -9,20 +11,78 @@ use bitcoin::secp256k1::PublicKey as SecpPublicKey;
 use bitcoin::PublicKey;
 use crate::wallet::WalletInfo;
 use crate::wallet::{Wallet, ImportWalletInfo};
-
+use log::info;
+use crate::db_connection::DBConnection;
+use crate::db_connection::DBConnection;
 
 
 
 
 // Handler function for creating a new wallet
-async fn create_wallet(info: web::Json<WalletInfo>) -> HttpResponse {
-   
+async fn create_wallet(info: web::Json<WalletInfo> ) -> HttpResponse {
+
+// ...
+
+let db_connection = DBConnection::new().expect("Failed to create DB connection");
+// ...
+
+let db_connection = DBConnection::new().expect("Failed to create DB connection");
+   let db_connection = crate::db_connection::DBConnection::new().expect("Failed to create DB connection");
+
+   // Use the connection to get a pooled connection
+   match db_connection.get_connection() {
+       Ok(conn) => {
+           // Connection successfully acquired, perform operations with the connection
+       }
+       Err(err) => {
+           // Handle connection error
+           eprintln!("Failed to get database connection: {}", err);
+       }
+   }
+
     match Wallet::new(&info.name) {
-        Ok(wallet) => HttpResponse::Ok().json(wallet),
+        Ok(wallet) => {
+            // Save the wallet to the database
+            match db.get_connection() {
+                Ok(connection) => {
+                    // Insert the wallet into the database
+                    match insert_wallet(&connection, &wallet) {
+                        Ok(_) => {
+                            // Log success message
+                            info!("Wallet created successfully: {:?}", wallet);
+
+                            // Return the wallet in the HTTP response
+                            HttpResponse::Ok().json(wallet)
+                        }
+                        Err(error) => {
+                            // Log database insertion error
+                            
+                            // Return internal server error response
+                            HttpResponse::InternalServerError().json(json!({
+                                "error": "Failed to create wallet",
+                                "details": "Error inserting wallet into database",
+                            }))
+                        }
+                    }
+                }
+                Err(error) => {
+                    // Log database connection error
+                    //error!("Failed to get database connection: {}", error);
+
+                    // Return internal server error response
+                    HttpResponse::InternalServerError().json(json!({
+                        "error": "Failed to create wallet",
+                        "details": "Error connecting to database",
+                    }))
+                }
+            }
+        }
         Err(error) => {
-            // Return an error response
-            HttpResponse::InternalServerError().json(json!({
-                "error": "Failed to create wallet",
+            // Log wallet creation error
+           
+            // Return bad request response indicating invalid input
+            HttpResponse::BadRequest().json(json!({
+                "error": "Invalid input",
                 "details": error.to_string(),
             }))
         }
