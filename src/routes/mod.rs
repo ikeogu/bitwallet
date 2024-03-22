@@ -1,67 +1,29 @@
 
-
 use actix_web::web;
-
 use actix_web::HttpResponse;
-use actix_web::Responder;
 use bitcoin::util::address::Address;
 use bitcoin::secp256k1::{SecretKey, Secp256k1};
-use serde_json::json;
 use bitcoin::secp256k1::PublicKey as SecpPublicKey;
 use bitcoin::PublicKey;
 use crate::wallet::WalletInfo;
 use crate::wallet::{Wallet, ImportWalletInfo};
-use crate::db::DBConnection;
-
+use crate::mnemonic::MnemonicPhrase;
+use crate::libs::db_connection::DbConnection;
+use log::debug;
 
 
 // Handler function for creating a new wallet
 async fn create_wallet(info: web::Json<WalletInfo> ) -> HttpResponse {
 
-
-    match Wallet::new(&info.name) {
-        Ok(wallet) => {
-            // Save the wallet to the database
-            let db_connection = db_connection::DBConnection::new().expect("Failed to create DB connection");
-            match db_connection.get_connection() {
-                Ok(connection) => {
-                    // Insert the wallet into the database
-                    match db_connection::DBConnection::insert_wallet(&connection, &wallet) {
-                        Ok(_) => {
-                            // Return the wallet in the HTTP response
-                            HttpResponse::Ok().json(wallet)
-                        }
-                        Err(error) => {  
-                            // Return internal server error response
-                            HttpResponse::InternalServerError().json(json!({
-                                "error": "Failed to create wallet",
-                                "details": "Error inserting wallet into database",
-                            }))
-                        }
-                    }
-                }
-                Err(error) => {
-                    // Log database connection error
-                    //error!("Failed to get database connection: {}", error);
-
-                    // Return internal server error response
-                    HttpResponse::InternalServerError().json(json!({
-                        "error": "Failed to create wallet",
-                        "details": "Error connecting to database",
-                    }))
-                }
-            }
-        }
-        Err(error) => {
-            // Return bad request response indicating invalid input
-            HttpResponse::BadRequest().json(json!({
-                "error": "Invalid input",
-                "details": error.to_string(),
-            }))
-        }
+    let name = info.name.clone();
+    let wallet = Wallet::new(&name);
+    match wallet {
+        Ok(wallet) => HttpResponse::Ok().json(wallet),
+        Err(e) => HttpResponse::BadRequest().body(e.to_string()),
     }
+
 }
- // 
+ 
 // Handler function for importing an existing wallet
 async fn import_wallet(info: web::Json<ImportWalletInfo>) -> HttpResponse {
     let private_key = info.private_key.clone();
@@ -72,7 +34,7 @@ async fn import_wallet(info: web::Json<ImportWalletInfo>) -> HttpResponse {
     }
 }
 
-pub async fn generate_keypair() -> impl Responder {
+pub fn generate_keypair() -> (SecretKey, String, String) {
     // Generate a new random private key
     let secp = Secp256k1::new();
     let private_key_bytes: [u8; 32] = rand::random(); // Generate 32 random bytes
@@ -91,19 +53,56 @@ pub async fn generate_keypair() -> impl Responder {
     let address = Address::p2pkh(&bitcoin_public_key, bitcoin::Network::Bitcoin);
 
     // Return the private key, public key, and address
-    HttpResponse::Ok().json(json!({
-        "private_key": private_key.to_string(),
-        "public_key": public_key.to_string(),
-        "address": address.to_string(),
-    }))
+    (
+        private_key,
+        public_key.to_string(),
+        address.to_string()
+    )
+}
+
+// Handler function for generating a new mnemonic phrase
+async fn generate_mnemonics (info: web::Json<MnemonicPhrase>) -> HttpResponse {
+    let wallet_id = info.wallet_id;
+    let mnemonic = MnemonicPhrase::new(wallet_id);
+    match mnemonic {
+        Ok(mnemonic) => HttpResponse::Ok().json(mnemonic),
+        Err(e) => HttpResponse::BadRequest().body(e.to_string()),
+    }
+    
+}
+
+// Handler function for getting the mnemonic phrase for a wallet
+async fn get_mnemonics(info: web::Json<MnemonicPhrase>) -> HttpResponse {
+    let wallet_id = info.wallet_id;
+    let db = DbConnection::new().expect("Failed to create DB connection");
+    let mnemonic = MnemonicPhrase::get_wallet_mnemonic(wallet_id, &db);
+    match mnemonic {
+        Ok(mnemonic) => HttpResponse::Ok().json(mnemonic),
+        Err(e) => HttpResponse::BadRequest().body(e.to_string()),
+    }
+}
+
+// confirm Mnemonic phrase
+async fn confirm_mnemonics(info: web::Json<MnemonicPhrase>) -> HttpResponse {
+    let wallet_id = info.wallet_id;
+    let phrase = info.phrase.clone();
+    let db = DbConnection::new().expect("Failed to create DB connection");
+    let mnemonic = MnemonicPhrase::confirm_phrase(wallet_id, &phrase, &db);
+    match mnemonic {
+        Ok(mnemonic) => HttpResponse::Ok().json(mnemonic),
+        Err(e) => HttpResponse::BadRequest().body(e.to_string()),
+    }
 }
 
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::scope("/api")
-        .route("/generate_keypair", web::get().to(generate_keypair))
+   
         .route("/create_wallet", web::post().to(create_wallet))
         .route("/import_wallet", web::post().to(import_wallet))
+        .route("/generate_mnemonics", web::post().to(generate_mnemonics))
+        .route("/get_mnemonics", web::post().to(get_mnemonics))
+        .route("/confirm_mnemonics", web::post().to(confirm_mnemonics))
 
     );
 }

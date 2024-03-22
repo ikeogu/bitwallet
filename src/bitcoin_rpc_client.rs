@@ -1,4 +1,4 @@
-use bitcoincore_rpc::{Auth, Client, RpcApi};
+/* use bitcoincore_rpc::{Auth, Client, RpcApi};
 //use bitcoin::Network;
 use std::error::Error;
 
@@ -19,3 +19,4 @@ impl BitcoinRPC {
         self.rpc_client.get_blockchain_info()
     }
 }
+ */

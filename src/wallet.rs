@@ -1,93 +1,132 @@
-use bitcoin::secp256k1::{Secp256k1, SecretKey};
+
+use bitcoin::secp256k1::SecretKey;
 use serde::{Serialize, Deserialize};
 use std::str::FromStr;
 use actix_web::Error;
-use rand::RngCore;
+use crate::routes::generate_keypair;
 use mysql::params;
+use crate::libs::db_connection::DbConnection;
+use mysql::prelude::Queryable;
 
 
 
 #[derive(Serialize, Deserialize)]
 pub struct Wallet {
-    name: String,
+   pub id: Option<i32>,
+   pub name: String,
     #[serde(serialize_with = "serialize_secret_key", deserialize_with = "deserialize_secret_key")]
-    private_key: SecretKey,
+   pub private_key: SecretKey,
+   pub public_key : String,
+   pub  address : String
 }
 
 impl Wallet {
 
     pub fn new(name: &str) -> Result<Self, Error> {
-        // Generate a new random private key
-        let secp = Secp256k1::new();
-        let mut rng = rand::thread_rng();
-        let mut private_key_bytes = [0u8; 32];
-        rng.fill_bytes(&mut private_key_bytes); 
+        
+        let (private_key, public_key, address) = generate_keypair();
 
-        // Create the wallet
-        let private_key = SecretKey::from_slice(&private_key_bytes)
+        let wallet = Self {
+            id: Some(0),
+            name: name.to_string(),
+            private_key,
+            public_key,
+            address
+        };
+
+        let db =  DbConnection::new().map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
+
+        // Save the wallet to the database
+        wallet.save_to_db(&db)?;
+
+        Ok(wallet)
+    }
+
+
+
+    fn save_to_db(&self, db: &DbConnection) -> Result<Wallet, Error> {
+        // Get a connection from the database connection pool
+        let mut conn = db.get_connection()
             .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
-
-        let wallet = Self {
-            name: name.to_string(),
-            private_key,
-        };
-
-        let db = Database::new().map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
-
-        // Save the wallet to the database
-        wallet.save_to_db(db)?;
-
-        Ok(wallet)
-    }
-
-
-    pub fn import(name: &str, private_key_str: &str) -> Result<Self, bitcoin::secp256k1::Error> {
-        let private_key = SecretKey::from_str(private_key_str)?;
-
-        let wallet = Self {
-            name: name.to_string(),
-            private_key,
-        };
-
-        let db = Database::new().map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
-
-        // Save the wallet to the database
-        wallet.save_to_db(db)?;
-
-        Ok(wallet)
-    }
-
-    fn save_to_db(&self, db: &Database) -> Result<(), Error> {
-        let conn = db.get_connection()?;
-        let private_key_str = self.private_key.to_string(); // Convert private key to string
-        
+    
+        // Convert the private key to a string
+        let private_key_str = self.private_key.to_string();
+    
+        // Execute the SQL query to insert the wallet into the database
         conn.exec_drop(
-            "INSERT INTO wallets (name, private_key) VALUES (?, ?)",
-            (self.name.clone(), private_key_str), // Pass parameters as a tuple
-        )?;
-        
-        Ok(())
+            r"INSERT INTO wallets (name, private_key, public_key, address)
+            VALUES (:name, :private_key, :public_key, :address)",
+            params! {
+                "name" => &self.name,
+                "private_key" => &private_key_str,
+                "public_key" => &self.public_key,
+                "address" => &self.address,
+            },
+        )
+        .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
+    
+        Ok(Wallet {
+            id: self.id,
+            name: self.name.clone(),
+            private_key: self.private_key.clone(),
+            public_key: self.public_key.clone(),
+            address: self.address.clone(),
+        })
     }
+    
 
-    fn load_from_db(name: &str, db: &Database) -> Result<Self, Error> {
-        let conn = db.get_connection()?;
-        
-        let mut stmt = conn.prepare("SELECT name, private_key FROM wallets WHERE name = ?")?;
-        let row_opt = stmt.execute(params![name])?.next();
-        
+    pub fn import(name: &str, private_key_str: &str) -> Result<Self, Error> {
+        // Convert the private key string to a SecretKey
+        let _private_key = SecretKey::from_str(private_key_str)
+            .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
+    
+        // Create a new DB connection
+        let db = DbConnection::new()
+            .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
+    
+        // Get a connection from the database connection pool
+        let mut conn = db.get_connection()
+            .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
+    
+        // Execute a SQL query to fetch the wallet based on the provided name and private key
+        let row_opt = conn.exec_first(
+            r"SELECT name, private_key, public_key, address
+            FROM wallets
+            WHERE name = :name AND private_key = :private
+            LIMIT 1",
+            params! {
+                "name" => name,
+                "private" => private_key_str,
+            },
+        )
+        .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
+    
+        // Check if a row was found
         if let Some(row) = row_opt {
-            let (name, private_key_str): (String, String) = mysql::from_row(row?);
+            // Extract the wallet data from the row
+            let ( id, name, private_key_str, public_key, address): (i32, String, String, String, String) =
+                mysql::from_row(row);
+            // Convert the private key string to a SecretKey
             let private_key = SecretKey::from_str(&private_key_str)
                 .map_err(|err| actix_web::error::ErrorInternalServerError(err))?;
-
-            Ok(Self {
-                name,
-                private_key,
-            })
+    
+            // Create the wallet instance
+            let wallet = Self {
+                id: Some(id),
+                name: name,
+                private_key: private_key,
+                public_key: public_key,
+                address: address,
+            };
+    
+            Ok(wallet)
         } else {
-            Err(actix_web::error::ErrorBadRequest("Wallet not found"))
+            // Return an error indicating that the wallet was not found
+            Err(actix_web::error::ErrorNotFound("Wallet not found"))
         }
     }
+    
+
 }
 
 
@@ -99,6 +138,7 @@ pub struct WalletInfo {
 
 #[derive(Serialize, Deserialize)]
 pub struct ImportWalletInfo {
+    
     pub name: String,
     #[serde(serialize_with = "serialize_secret_key", deserialize_with = "deserialize_secret_key")]
     pub private_key: SecretKey,

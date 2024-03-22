@@ -6,9 +6,11 @@ mod routes;
 //use bitcoin::Network;
 //use std::error::Error;
 mod wallet;
+pub mod libs;
+pub mod mnemonic;
 use actix_web::{App, HttpServer};
 use routes::configure_routes;
-use env_logger::Env;
+use libs::db_connection::DbConnection;
 
 
 /* fn main() -> Result<(), Box<dyn Error>> {
@@ -30,7 +32,11 @@ use env_logger::Env;
 
  #[actix_web::main]
   async fn main() -> std::io::Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    env_logger::init();
+    println!("Starting server at: http://127.0.0.1:8080");
+    DbConnection::new().expect("Failed to create DB connection");
+
+
      
     HttpServer::new(|| {
         App::new()
